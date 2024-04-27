@@ -21,12 +21,12 @@ from telegram.ext import (
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 
-TOKEN = open('token.txt', 'r').read()
+TOKEN = open('data\\token.txt', 'r').read()
 
 
 schedule_keyboard = [
     [
-        InlineKeyboardButton('Activate', callback_data='schedule_activate'),
+        InlineKeyboardButton('Enable', callback_data='schedule_enable'),
         InlineKeyboardButton('Disable', callback_data='schedule_disable'),
     ],
     [
@@ -56,9 +56,24 @@ SUBSCRIBED_CHATS = 0
 ACCESSED_KEYBOARDS = 0 # FIXME: access to keyboard due to identical message IDs in different chats(do dict in chat_data user:{accessed_keyboards}
 
 
-def remove_accessed_keyboard(context: ContextTypes.DEFAULT_TYPE, message_id) -> None:
-    if message_id in context.user_data.get(ACCESSED_KEYBOARDS, []):
-        context.user_data.get(ACCESSED_KEYBOARDS).remove(message_id)
+def load(context):
+    context.bot_data = json.loads(open('data\\bot_data.json', 'r').read())
+    context.chat_data = json.loads(open('data\\chat_data.json', 'r').read())
+    context.user_data = json.loads(open('data\\user_data.json', 'r').read())
+
+
+def save(context):
+    open('data\\bot_data.json', 'w').write(json.dumps(context.bot_data))
+
+    chat_data = {}
+    for element in context.chat_data:
+        chat_data[element] = context.chat_data[element]
+    open('data\\chat_data.json', 'w').write(json.dumps(chat_data))
+
+    user_data = {}
+    for element in context.user_data:
+        user_data[element] = context.user_data[element]
+    open('data\\user_data.json', 'w').write(json.dumps(user_data))
 
 
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -70,16 +85,19 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def schedule_set_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    temp_json = context.chat_data.get(SCHEDULE_DATA_JSON, [])
+    temp = context.chat_data.get(SCHEDULE_DATA, [])
+
     try:
         context.chat_data[SCHEDULE_DATA_JSON] = update.message.text
         context.chat_data[SCHEDULE_DATA] = json.loads(update.message.text)
 
         await update.message.reply_text('The new schedule was successfully set.')
     except ValueError as e:
+        context.chat_data[SCHEDULE_DATA_JSON] = temp_json
+        context.chat_data[SCHEDULE_DATA] = temp
+
         await update.message.reply_text('JSON syntax is invalid.\n\nSee error for details:\n' + str(e))
-
-    # remove_accessed_keyboard(context, message_id) # TODO: get message id
-
 
     return ConversationHandler.END
 
@@ -109,7 +127,6 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
         if schedule_data:
             message = f'Current schedule:\n<code>{schedule_data}</code>'
             parse_mode = telegram.constants.ParseMode.HTML
-        remove_accessed_keyboard(context, message_id) # go back to main button menu feature
     elif query.data == 'schedule_set':
         if chat_id > 0:
             message = 'Send a new schedule.'
@@ -120,7 +137,6 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
         state = SCHEDULE_TEXT_STATE
     elif query.data == 'schedule_set_cancel':
         message = 'Schedule setting cancelled.'
-        remove_accessed_keyboard(context, message_id)
     elif query.data == 'schedule_delete':
         if schedule_data:
             message = 'Are you sure?'
@@ -130,26 +146,21 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
             context.chat_data.pop(SCHEDULE_DATA_JSON)
             context.chat_data.pop(SCHEDULE_DATA)
             message = 'Schedule deleted.'
-        remove_accessed_keyboard(context, message_id)
     elif query.data == 'schedule_delete_cancel':
         message = 'Schedule deletion cancelled.'
-        remove_accessed_keyboard(context, message_id)
-    elif query.data == 'schedule_activate':
+    elif query.data == 'schedule_enable':
         if schedule_data:
             if not SUBSCRIBED_CHATS in context.bot_data:
                 context.bot_data[SUBSCRIBED_CHATS] = [chat_id]
             elif not chat_id in context.bot_data.get(SUBSCRIBED_CHATS, []):
                 context.bot_data[SUBSCRIBED_CHATS].append(chat_id)
-            message = 'Schedule activated.'
-        remove_accessed_keyboard(context, message_id)
+            message = 'Schedule enabled.'
     elif query.data == 'schedule_disable':
         if chat_id in context.bot_data.get(SUBSCRIBED_CHATS, []):
             context.bot_data[SUBSCRIBED_CHATS].remove(chat_id)
         message = 'Schedule disabled.'
-        remove_accessed_keyboard(context, message_id)
     else:
         message = 'Invalid command.'
-        remove_accessed_keyboard(context, message_id)
 
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode=parse_mode)
     return state
@@ -169,7 +180,11 @@ def main() -> None:
     application.add_handler(schedule_handler)
     application.add_handler(schedule_conv_handler)
 
+    load(application)
+
     application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    save(application)
 
 
 if __name__ == '__main__':
