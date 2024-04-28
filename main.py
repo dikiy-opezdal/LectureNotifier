@@ -1,3 +1,5 @@
+import asyncio
+import datetime
 import json
 import logging
 
@@ -14,14 +16,14 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
-    filters,
+    filters, PicklePersistence,
 )
 
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 
-TOKEN = open('data\\token.txt', 'r').read()
+TOKEN = open('data/token.txt', 'r').read()
 
 
 schedule_keyboard = [
@@ -54,26 +56,6 @@ SCHEDULE_DATA = 0
 SCHEDULE_DATA_JSON = 1
 SUBSCRIBED_CHATS = 0
 ACCESSED_KEYBOARDS = 0 # FIXME: access to keyboard due to identical message IDs in different chats(do dict in chat_data user:{accessed_keyboards}
-
-
-def load(context):
-    context.bot_data = json.loads(open('data\\bot_data.json', 'r').read())
-    context.chat_data = json.loads(open('data\\chat_data.json', 'r').read())
-    context.user_data = json.loads(open('data\\user_data.json', 'r').read())
-
-
-def save(context):
-    open('data\\bot_data.json', 'w').write(json.dumps(context.bot_data))
-
-    chat_data = {}
-    for element in context.chat_data:
-        chat_data[element] = context.chat_data[element]
-    open('data\\chat_data.json', 'w').write(json.dumps(chat_data))
-
-    user_data = {}
-    for element in context.user_data:
-        user_data[element] = context.user_data[element]
-    open('data\\user_data.json', 'w').write(json.dumps(user_data))
 
 
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -122,6 +104,7 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     if not message_id in context.user_data.get(ACCESSED_KEYBOARDS, []):
         return state
+    context.user_data[ACCESSED_KEYBOARDS] = [message_id]
 
     if query.data == 'schedule_show':
         if schedule_data:
@@ -129,7 +112,7 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode = telegram.constants.ParseMode.HTML
     elif query.data == 'schedule_set':
         if chat_id > 0:
-            message = 'Send a new schedule.'
+            message = 'Send a new schedule as a JSON string.'
             reply_markup = schedule_set_markup
         else:
             message = 'Send a new schedule as a reply to this message.'
@@ -154,6 +137,7 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 context.bot_data[SUBSCRIBED_CHATS] = [chat_id]
             elif not chat_id in context.bot_data.get(SUBSCRIBED_CHATS, []):
                 context.bot_data[SUBSCRIBED_CHATS].append(chat_id)
+            # schedule_notify(context)
             message = 'Schedule enabled.'
     elif query.data == 'schedule_disable':
         if chat_id in context.bot_data.get(SUBSCRIBED_CHATS, []):
@@ -167,7 +151,8 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 def main() -> None:
-    application = Application.builder().token(TOKEN).build()
+    persistence = PicklePersistence(filepath='data/database.pickle')
+    application = Application.builder().token(TOKEN).persistence(persistence=persistence).build()
 
     schedule_handler = CommandHandler('schedule', schedule_command)
     schedule_conv_handler = ConversationHandler(
@@ -180,11 +165,7 @@ def main() -> None:
     application.add_handler(schedule_handler)
     application.add_handler(schedule_conv_handler)
 
-    load(application)
-
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-    save(application)
 
 
 if __name__ == '__main__':
