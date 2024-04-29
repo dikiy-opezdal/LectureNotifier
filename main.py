@@ -58,10 +58,92 @@ SUBSCRIBED_CHATS = 0
 ACCESSED_KEYBOARDS = 0 # FIXME: access to keyboard due to identical message IDs in different chats(do dict in chat_data user:{accessed_keyboards}
 
 
+def weekday2int(weekday):
+    if weekday == 'Monday': return 0
+    elif weekday == 'Tuesday': return 1
+    elif weekday == 'Wednesday': return 2
+    elif weekday == 'Thursday': return 3
+    elif weekday == 'Friday': return 4
+    elif weekday == 'Saturday': return 5
+    elif weekday == 'Sunday': return 6
+    else: return -1
+
+
+def gen_notify_text(lecture):
+    text = ''
+    title = 'Lecture '
+    lecturer = ' '
+    end = ''
+    link = ''
+    note = ''
+    join_markup = None
+
+    if 'title' in lecture:
+        title = lecture['title']
+    if 'lecturer' in lecture:
+        lecturer = f', {lecture["lecturer"]},'
+    if 'length' in lecture:
+        start = datetime.datetime.strptime(lecture['start'], '%H:%M')
+        length = datetime.datetime.strptime(lecture['length'], '%H:%M')
+
+        delta_length = datetime.timedelta(hours=length.hour, minutes=length.minute)
+
+        end = f' – {datetime.datetime.strftime(start + delta_length, "%H:%M")}'
+    if 'link' in lecture:
+        link = lecture['link']
+
+        join_markup = InlineKeyboardMarkup([[InlineKeyboardButton('Join', url=link)]])
+    if 'note' in lecture:
+        note = f'\n\n{lecture["note"]}'
+
+
+    text = f'<b><a href="{link}">{title}</a></b>{lecturer} is starting soon.\n<b>{lecture["start"]}{end}</b><i>{note}</i>'
+
+    return text, join_markup
+
+
+def find_closest_lecture(day):
+    last_lecture = -1
+    time_now = datetime.datetime.now()
+    last_delay = False
+
+    if len(day) > 0:
+        for lecture in range(len(day)):
+            if 'start' in day[lecture]:
+                last_lecture = lecture
+                last_delay = datetime.datetime.strptime(day[last_lecture]['start'], '%H:%M') - time_now
+                break
+
+        if last_lecture >= 0:
+            for lecture in range(len(day)):
+                delay = datetime.datetime.strptime(day[lecture]['start'], '%H:%M') - time_now
+                if delay < last_delay:
+                    last_lecture = lecture
+                    last_delay = delay
+
+    return last_lecture
+
+
+async def schedule_notify(context, chat_id):
+    try:
+        schedule = context.chat_data.get(SCHEDULE_DATA, False)
+        if schedule:
+            weekday = weekday2int(datetime.datetime.now().weekday())
+            if len(schedule) > weekday:
+                day = schedule[weekday]
+                lecture = find_closest_lecture(day)
+                if lecture >= 0:
+                    text, markup = gen_notify_text(day[lecture])
+                    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup, parse_mode=telegram.constants.ParseMode.HTML)
+    except IndexError:
+        await context.bot.send_message(chat_id=chat_id, text='An error occurred during schedule processing. '
+                                                             'Please, check if the schedule is correct.')
+
+
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ACCESSED_KEYBOARDS in context.user_data:
         context.user_data[ACCESSED_KEYBOARDS] = []
-    context.user_data.get(ACCESSED_KEYBOARDS).append(update.message.id + 1)
+    context.user_data.get(ACCESSED_KEYBOARDS, []).append(update.message.id + 1)
 
     await update.message.reply_text('Choose an action.', reply_markup=schedule_markup)
 
@@ -137,7 +219,7 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 context.bot_data[SUBSCRIBED_CHATS] = [chat_id]
             elif not chat_id in context.bot_data.get(SUBSCRIBED_CHATS, []):
                 context.bot_data[SUBSCRIBED_CHATS].append(chat_id)
-            # schedule_notify(context)
+            await schedule_notify(context, chat_id)
             message = 'Schedule enabled.'
     elif query.data == 'schedule_disable':
         if chat_id in context.bot_data.get(SUBSCRIBED_CHATS, []):
@@ -170,3 +252,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
