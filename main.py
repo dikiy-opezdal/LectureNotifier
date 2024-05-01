@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 
+import validators
 import telegram.constants
 from telegram import (
     Update,
@@ -58,17 +59,6 @@ SUBSCRIBED_CHATS = 0
 ACCESSED_KEYBOARDS = 0 # FIXME: access to keyboard due to identical message IDs in different chats(do dict in chat_data user:{accessed_keyboards}
 
 
-def weekday2int(weekday):
-    if weekday == 'Monday': return 0
-    elif weekday == 'Tuesday': return 1
-    elif weekday == 'Wednesday': return 2
-    elif weekday == 'Thursday': return 3
-    elif weekday == 'Friday': return 4
-    elif weekday == 'Saturday': return 5
-    elif weekday == 'Sunday': return 6
-    else: return -1
-
-
 def gen_notify_text(lecture):
     text = ''
     title = 'Lecture '
@@ -83,19 +73,21 @@ def gen_notify_text(lecture):
     if 'lecturer' in lecture:
         lecturer = f', {lecture["lecturer"]},'
     if 'length' in lecture:
-        start = datetime.datetime.strptime(lecture['start'], '%H:%M')
-        length = datetime.datetime.strptime(lecture['length'], '%H:%M')
+        try:
+            start = datetime.datetime.strptime(lecture['start'], '%H:%M')
+            length = datetime.datetime.strptime(lecture['length'], '%H:%M')
 
-        delta_length = datetime.timedelta(hours=length.hour, minutes=length.minute)
+            delta_length = datetime.timedelta(hours=length.hour, minutes=length.minute)
 
-        end = f' – {datetime.datetime.strftime(start + delta_length, "%H:%M")}'
-    if 'link' in lecture:
+            end = f' – {datetime.datetime.strftime(start + delta_length, "%H:%M")}'
+        except ValueError:
+            end = ''
+    if 'link' in lecture and validators.url(lecture['link']):
         link = lecture['link']
 
         join_markup = InlineKeyboardMarkup([[InlineKeyboardButton('Join', url=link)]])
     if 'note' in lecture:
         note = f'\n\n{lecture["note"]}'
-
 
     text = f'<b><a href="{link}">{title}</a></b>{lecturer} is starting soon.\n<b>{lecture["start"]}{end}</b><i>{note}</i>'
 
@@ -105,6 +97,7 @@ def gen_notify_text(lecture):
 def find_closest_lecture(day):
     last_lecture = -1
     time_now = datetime.datetime.now()
+    time_now = datetime.datetime(1900, 1, 1, time_now.hour, time_now.minute, time_now.second)
     last_delay = False
 
     if len(day) > 0:
@@ -121,20 +114,25 @@ def find_closest_lecture(day):
                     last_lecture = lecture
                     last_delay = delay
 
-    return last_lecture
+    return last_lecture, last_delay
 
 
 async def schedule_notify(context, chat_id):
     try:
         schedule = context.chat_data.get(SCHEDULE_DATA, False)
-        if schedule:
-            weekday = weekday2int(datetime.datetime.now().weekday())
+        if isinstance(schedule, list):
+            weekday = datetime.datetime.now().weekday()
             if len(schedule) > weekday:
                 day = schedule[weekday]
-                lecture = find_closest_lecture(day)
-                if lecture >= 0:
-                    text, markup = gen_notify_text(day[lecture])
-                    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup, parse_mode=telegram.constants.ParseMode.HTML)
+                if isinstance(day, list):
+                    lecture, delay = find_closest_lecture(day)
+                    if lecture >= 0:
+                        text, markup = gen_notify_text(day[lecture])
+
+                        await asyncio.sleep(delay.total_seconds())
+
+                        await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup,
+                                                       parse_mode=telegram.constants.ParseMode.HTML)
     except IndexError:
         await context.bot.send_message(chat_id=chat_id, text='An error occurred during schedule processing. '
                                                              'Please, check if the schedule is correct.')
@@ -219,7 +217,11 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 context.bot_data[SUBSCRIBED_CHATS] = [chat_id]
             elif not chat_id in context.bot_data.get(SUBSCRIBED_CHATS, []):
                 context.bot_data[SUBSCRIBED_CHATS].append(chat_id)
-            await schedule_notify(context, chat_id)
+
+            loop = asyncio.get_event_loop()
+            loop.create_task(schedule_notify(context, chat_id))
+
+
             message = 'Schedule enabled.'
     elif query.data == 'schedule_disable':
         if chat_id in context.bot_data.get(SUBSCRIBED_CHATS, []):
