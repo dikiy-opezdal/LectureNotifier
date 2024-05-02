@@ -61,8 +61,8 @@ ACCESSED_KEYBOARDS = 0 # FIXME: access to keyboard due to identical message IDs 
 
 def gen_notify_text(lecture):
     text = ''
-    title = 'Lecture '
-    lecturer = ' '
+    title = 'Lecture'
+    lecturer = ''
     end = ''
     link = ''
     note = ''
@@ -98,19 +98,13 @@ def find_closest_lecture(day):
     last_lecture = -1
     time_now = datetime.datetime.now()
     time_now = datetime.datetime(1900, 1, 1, time_now.hour, time_now.minute, time_now.second)
-    last_delay = False
+    last_delay = 128000
 
     if len(day) > 0:
         for lecture in range(len(day)):
             if 'start' in day[lecture]:
-                last_lecture = lecture
-                last_delay = datetime.datetime.strptime(day[last_lecture]['start'], '%H:%M') - time_now
-                break
-
-        if last_lecture >= 0:
-            for lecture in range(len(day)):
-                delay = datetime.datetime.strptime(day[lecture]['start'], '%H:%M') - time_now
-                if delay < last_delay:
+                delay = (datetime.datetime.strptime(day[lecture]['start'], '%H:%M') - time_now).total_seconds()
+                if 0 < delay < last_delay:
                     last_lecture = lecture
                     last_delay = delay
 
@@ -128,11 +122,12 @@ async def schedule_notify(context, chat_id):
                     lecture, delay = find_closest_lecture(day)
                     if lecture >= 0:
                         text, markup = gen_notify_text(day[lecture])
-
-                        await asyncio.sleep(delay.total_seconds())
-
+                        await asyncio.sleep(delay)
                         await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup,
                                                        parse_mode=telegram.constants.ParseMode.HTML)
+                        
+                        loop = asyncio.get_event_loop()
+                        loop.create_task(schedule_notify(context, chat_id))
     except IndexError:
         await context.bot.send_message(chat_id=chat_id, text='An error occurred during schedule processing. '
                                                              'Please, check if the schedule is correct.')
