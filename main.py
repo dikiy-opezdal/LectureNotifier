@@ -122,15 +122,44 @@ async def schedule_notify(context, chat_id):
                     lecture, delay = find_closest_lecture(day)
                     if lecture >= 0:
                         text, markup = gen_notify_text(day[lecture])
-                        await asyncio.sleep(delay)
-                        await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup,
-                                                       parse_mode=telegram.constants.ParseMode.HTML)
-                        
-                        loop = asyncio.get_event_loop()
-                        loop.create_task(schedule_notify(context, chat_id))
+                        await asyncio.sleep(delay - 60)
+
+                        if chat_id in context.bot_data[SUBSCRIBED_CHATS]:
+                            await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup,
+                                                           parse_mode=telegram.constants.ParseMode.HTML)
+
+                            loop = asyncio.get_event_loop()
+                            loop.create_task(schedule_notify(context, chat_id))
     except IndexError:
         await context.bot.send_message(chat_id=chat_id, text='An error occurred during schedule processing. '
                                                              'Please, check if the schedule is correct.')
+
+
+def check_schedule(schedule):
+    if not isinstance(schedule, list):
+        return 'Invalid schedule format.'
+    else:
+        for i in range(len(schedule)):
+            if not isinstance(schedule[i], list):
+                return f'Invalid day {i} format.'
+            else:
+                for j in range(len(schedule[i])):
+                    if not isinstance(schedule[i][j], dict):
+                        return f'Invalid lecture {j} in day {i} format.'
+                    elif 'link' in schedule[i][j] and not validators.url(schedule[i][j]['link']):
+                        return f'Invalid link format for lecture {j} in day {i}.'
+                    elif not 'start' in schedule[i][j]:
+                        return f'Lecture {j} in day {i} has no start time.'
+                    else:
+                        try:
+                            datetime.datetime.strptime(schedule[i][j]['start'], '%H:%M')
+
+                            if 'length' in schedule[i][j]:
+                                datetime.datetime.strptime(schedule[i][j]['length'], '%H:%M')
+                        except ValueError:
+                            return f'Invalid time format for lecture {j} in day {i}.'
+
+    return 0
 
 
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -149,7 +178,14 @@ async def schedule_set_command(update: Update, context: ContextTypes.DEFAULT_TYP
         context.chat_data[SCHEDULE_DATA_JSON] = update.message.text
         context.chat_data[SCHEDULE_DATA] = json.loads(update.message.text)
 
-        await update.message.reply_text('The new schedule was successfully set.')
+        result = check_schedule(context.chat_data.get(SCHEDULE_DATA))
+        if result == 0:
+            await update.message.reply_text('The new schedule was successfully set.')
+        else:
+            context.chat_data[SCHEDULE_DATA_JSON] = temp_json
+            context.chat_data[SCHEDULE_DATA] = temp
+
+            await update.message.reply_text('Schedule structure is invalid.\n\nSee error for details:\n' + result)
     except ValueError as e:
         context.chat_data[SCHEDULE_DATA_JSON] = temp_json
         context.chat_data[SCHEDULE_DATA] = temp
